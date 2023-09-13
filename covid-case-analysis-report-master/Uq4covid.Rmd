@@ -1,0 +1,424 @@
+---
+title: "Uq4covid"
+author: "zhujiac"
+date: "2023/7/18"
+output: html_document
+---
+
+
+
+
+```{r}
+#连接python
+library(reticulate)
+use_python("D:/anaconda/python.exe")
+```
+
+
+
+```{r}
+#连接python包高斯过程
+#mogp_emulator <- import("mogp_emulator")
+#mogp_priors <- import("mogp_emulator.Priors")
+
+```
+
+
+
+#DATAINCOME
+
+```{r}
+
+library(GGally)
+library(leaps)
+library(ggplot2)
+library(mnormt)
+library(mgcv)
+library(car)
+covid_inputs <- read.csv("inputs.csv")
+colnames(covid_inputs)
+dim(covid_inputs)
+
+covid_inputs[1,]
+#训练集,测试集划分
+
+cn<-nrow(covid_inputs)
+train_size <- round(0.7 * cn)  # 计算训练集的大小，取整数部分
+
+set.seed(123)  # 设置随机种子，以确保结果可重复
+train_indices <- sample(1:cn, train_size)  # 随机选择训练集的索引
+
+train_data <- covid_inputs[train_indices, ]  # 根据索引获取训练集
+test_data <- covid_inputs[-train_indices, ] 
+
+
+
+covid_outputs <- readRDS("outputs.rds")
+dim(covid_outputs)
+head(covid_outputs)
+temp <- subset(covid_outputs, 
+               replicate==1 & week==12)
+
+#temp
+totals <- aggregate(deaths ~ output, data = temp,FUN = mean)
+head(covid_inputs)
+#
+deaths<-round(totals[,2])
+totalout<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout<-subset(totalout,select = -deaths)
+colnames(totalout)[2]='deaths'
+
+library(xlsx)
+inputhead<-head(covid_inputs)
+#outputhead<-head(covid_outputs)
+#write.xlsx(outputhead, file = "name.xlsx", sheetName = "Sheet1")
+
+totalout
+```
+
+```{r}
+library(car)
+train_df <- merge(train_data, totalout, by = "output")
+test_df <- merge(test_data, totalout, by = "output")
+#缺失值处理：查看是否有缺失值
+sum(is.na(train_df))
+sum(is.na(test_df))
+#异常值检验：
+sp=boxplot(train_df$deaths)
+sp$out
+
+#lof检验异常值
+library(dbscan)
+outliers_train<-data.frame()
+outliers_test<-data.frame()
+for (i in 2:18){
+lof_scores<-lof(as.matrix(train_df[,i]))
+outliers_train <- rbind(outliers_train,train_df[lof_scores > 1.5, ])
+}
+print(outliers_train)
+for (i in 2:18){
+lof_scores<-lof(as.matrix(test_df[,i]))
+outliers_test <- rbind(outliers_test,train_df[lof_scores > 1.5, ])
+}
+print(outliers_test)
+
+```
+
+
+```{r}
+#train_df <- merge(train_data, totalout, by = "output")
+#test_df <- merge(test_data, totalout, by = "output")
+nrow(train_df)
+head(train_df)
+ncol(train_df)
+#
+head(train_df)
+head(test_df)
+#
+train_used<-train_df[,c(2:16,18)]
+#trused<-head(train_used)
+#write.xlsx(trused, file = "name.xlsx", sheetName = "Sheet1")
+
+test_used<-test_df[,(2:16)]
+head(test_used)
+test_true<-test_df[,18]
+
+```
+
+```{r}
+#
+ggplot(data.frame(R0 = covid_inputs$R0, Deaths = totalout$deaths), aes(x = R0, y = Deaths)) +
+geom_point()
+
+ggplot(data.frame(TE = covid_inputs$TE, Deaths = totalout$deaths), aes(x = TE, y = Deaths)) +
+geom_point()
+
+qqnorm(totalout$deaths)
+qqline(totalout$deaths, col=2, lwd=2)
+```
+
+# Gaussion process试验1
+```{r}
+library(ggplot2)
+library(gstat)
+library(sp)
+library(rgdal)
+library(DiceKriging)
+library(mlrMBO)
+library(kernlab)
+library(caret)
+library(lmtest)
+library(reticulate)
+library(iml)
+library(ggcorrplot)
+model <- gausspr(deaths~.,data=train_used)
+model_lm<-lm(deaths~.,data=train_used)
+model_glm<-glm(deaths~.,data=train_used)
+summary(model_glm)
+preddata<-predict(model,newdata = test_used)
+preddata_lm<-predict(model_lm,newdata = test_used)
+
+tesdata<-predict(model,newdata=train_used)
+tesdata_lm<-predict(model_lm,newdata=train_used)
+
+residuals_lm<-train_used$deaths - tesdata_lm
+residuals <- train_used$deaths - tesdata
+residuals
+plot(residuals,main = "Residual Plot", xlab = "Index", ylab = "Residuals")
+plot(residuals_lm,main = "Residual Plot", xlab = "Index", ylab = "Residuals")
+
+#标准化残差
+standardized_residuals <- residuals / sd(residuals)
+
+plot(preddata,type="l" )
+lines(test_true,type = "l", col = "red")
+
+#预测效果评价
+cor_matrix <- cor(test_used)
+ggcorrplot(cor_matrix, type = "lower")
+#正态性
+par(mfrow=c(1,2))
+qqnorm(test_true)
+qqline(test_true, col=2, lwd=2)
+
+qqnorm(preddata)
+qqline(preddata, col=2, lwd=2)
+
+#针对连续型变量进行预测评价，指标如下：
+#1.RMSE
+RMSE(preddata,test_true)
+mean(test_true)
+#2.
+mse <- mean((preddata - test_true)^2)
+mse
+mean(preddata)
+#
+R2(preddata_lm,test_true)
+#
+
+```
+
+
+
+#不同分辨率（维度选择）对结果的影响
+```{r}
+#在output集中，进行针对不同分辨率的重采样
+#地区
+#预览output
+covid_outputs
+#地区选择1
+temp_region1 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000001")
+totals<- aggregate(deaths ~ output, data = temp_region1,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_1<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_1<-subset(totalout_1,select = -deaths)
+colnames(totalout_1)[2]='deaths'
+
+#地区选择2
+temp_region2 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000002")
+totals<- aggregate(deaths ~ output, data = temp_region2,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_2<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_2<-subset(totalout_2,select = -deaths)
+colnames(totalout_2)[2]='deaths'
+
+#地区选择3
+temp_region3 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000003")
+
+totals<- aggregate(deaths ~ output, data = temp_region3,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_3<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_3<-subset(totalout_3,select = -deaths)
+colnames(totalout_3)[2]='deaths'
+
+#地区选择4
+temp_region4 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000004")
+
+totals<- aggregate(deaths ~ output, data = temp_region4,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_4<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_4<-subset(totalout_4,select = -deaths)
+colnames(totalout_4)[2]='deaths'
+
+
+#地区选择5
+temp_region5 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000005")
+
+totals<- aggregate(deaths ~ output, data = temp_region5,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_5<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_5<-subset(totalout_5,select = -deaths)
+colnames(totalout_5)[2]='deaths'
+
+
+
+#地区选择6
+temp_region6 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000006")
+
+totals<- aggregate(deaths ~ output, data = temp_region6,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_6<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_6<-subset(totalout_6,select = -deaths)
+colnames(totalout_6)[2]='deaths'
+
+
+#地区选择7
+temp_region7 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000007")
+
+
+
+totals<- aggregate(deaths ~ output, data = temp_region7,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_7<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_7<-subset(totalout_7,select = -deaths)
+colnames(totalout_7)[2]='deaths'
+
+
+#地区选择8
+temp_region8 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000008")
+
+totals<- aggregate(deaths ~ output, data = temp_region8,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_8<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_8<-subset(totalout_8,select = -deaths)
+colnames(totalout_8)[2]='deaths'
+
+
+#地区选择9
+temp_region9 <- subset(covid_outputs, 
+               replicate==1 & week==12&region=="E12000009")
+
+totals<- aggregate(deaths ~ output, data = temp_region9,FUN = mean)
+
+deaths<-round(totals[,2])
+totalout_9<-data.frame(totals,deaths)
+#drop(totalout['deaths'])
+totalout_9<-subset(totalout_9,select = -deaths)
+colnames(totalout_9)[2]='deaths'
+
+totalout_1
+
+#直接对9个地区建立模型预测，并输出各个预测效果
+df_names <- c("totalout_1", "totalout_2", "totalout_3", "totalout_4", "totalout_5", "totalout_6", "totalout_7", "totalout_8", "totalout_9")
+i=1
+rmse<-0
+mse<-0
+r2<-0
+for(df in df_names){
+  #针对数据集的梳理
+  train_df <- merge(train_data,get(df), by = "output")
+  test_df <- merge(test_data, get(df), by = "output")
+  test_used<-test_df[,(2:16)]
+  #head(p)
+  test_true<-test_df[,18]
+  train_used<-train_df[,c(2:16,18)]
+  #循环建模
+  model <- gausspr(deaths~.,data=train_used)
+  preddata<-predict(model,newdata = test_used)
+  
+  #
+  #1.RMSE
+  rmse<-data.frame(rmse,RMSE(preddata,test_true))
+  #2. 
+  mse<-data.frame(mse,mean((preddata - test_true)^2))
+  
+  #
+  r2<-data.frame(r2,R2(preddata,test_true))
+  
+  #
+}
+rmse<-t(rmse)
+mse<-t(mse)
+r2<-t(r2)
+result<-data.frame(rmse,mse,r2)
+colnames(result)[1]='rmse'
+colnames(result)[2]='mse'
+colnames(result)[3]='r2'
+result<-result[-1,]
+rownames(result)[1]='E12000001'
+rownames(result)[2]='E12000002'
+rownames(result)[3]='E12000003'
+rownames(result)[4]='E12000004'
+rownames(result)[5]='E12000005'
+rownames(result)[6]='E12000006'
+rownames(result)[7]='E12000007'
+rownames(result)[8]='E12000008'
+rownames(result)[9]='E12000009'
+print(result)
+```
+
+
+```{r}
+rmse<-0
+mse<-0
+r2<-0
+LADname<-unique(covid_outputs$LAD19CD)
+for (name in LADname){
+temp_LAD <- subset(covid_outputs, 
+               replicate==1 & week==12&LAD19CD==name)
+totals<- aggregate(deaths ~ output, data = temp_LAD,FUN = mean)
+
+deaths<-round(totals[,2])
+totaloutname<-data.frame(totals,deaths)
+colnames(totaloutname)[2]='deaths'
+
+train_df <- merge(train_data,totaloutname, by = "output")
+test_df <- merge(test_data,totaloutname, by = "output")
+test_used<-test_df[,(2:16)]
+#head(p)
+test_true<-test_df[,18]
+train_used<-train_df[,c(2:16,18)]
+model <- gausspr(deaths~.,data=train_used)
+preddata<-predict(model,newdata = test_used)
+  
+  #
+  #1.RMSE
+rmse<-data.frame(rmse,RMSE(preddata,test_true))
+  #2. 
+mse<-data.frame(mse,mean((preddata - test_true)^2))
+  #
+r2<-data.frame(r2,R2(preddata,test_true))
+}
+rmse<-t(rmse)
+mse<-t(mse)
+r2<-t(r2)
+result<-data.frame(rmse,mse,r2)
+result<-result[-1,]
+for(i in (1:length(LADname))){
+  rownames(result)[i]=LADname[i]
+}
+print(result)
+head(result)
+print(result['E06000012',])
+
+
+
+
+
+```
+

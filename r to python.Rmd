@@ -1,0 +1,89 @@
+---
+title: "Untitled"
+author: "zhujiac"
+date: "2023/8/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+#python包Gaussion process试验2
+```{r}
+
+mean_func <- "t[16] ~ t[1] + t[2] + t[3] +t[4] +t[5] +t[6] +t[7] +t[8] +t[9] +t[10] + t[11] + t[12] + t[13] + t[14] + t[15]"
+extract_targets <- function(x, target_cols = list("deaths")) {
+  "separate a data frame into inputs, targets, and inputdict for use with GP class"
+  
+  for (t in target_cols) {
+    stopifnot(t %in% names(x))
+  }
+  
+  n_targets <- length(target_cols)
+  
+  inputs <- matrix(NA, ncol=ncol(x) - n_targets, nrow=nrow(x))
+  targets <- matrix(NA, ncol=n_targets, nrow=nrow(x))
+  inputdict <- dict()
+  
+  input_count <- 1
+  target_count <- 1
+
+  for (n in names(x)) {
+    if (n %in% target_cols) {
+      targets[,target_count] <- as.matrix(x[n])
+    } else {
+      inputs[,input_count] <- as.matrix(x[n])
+      inputdict[n] <- as.integer(input_count - 1)
+      input_count <- input_count + 1
+    }
+  }
+  
+  if (n_targets == 1) {
+    targets <- c(targets)
+  }
+  
+  return(list(inputs, targets, inputdict))
+}
+
+
+priors <- mogp_priors$GPPriors(mean=mogp_priors$MeanPriors(mean=c(0., 0., 0., 0.),
+                                                           cov=c(1., 1., 1., 1.)),
+                               corr=list(mogp_priors$LogNormalPrior(1., 1.),
+                                         mogp_priors$LogNormalPrior(1., 1.)),
+                               cov=mogp_priors$InvGammaPrior(2., 1.),
+                               nugget=mogp_priors$GammaPrior(1., 0.2))
+
+target_list <- extract_targets(t)
+inputs <- target_list[[1]]
+
+targets <- target_list[[2]]
+inputdict <- target_list[[3]]
+
+
+gp <- mogp_emulator$GaussianProcess(inputs, targets, 
+                                    mean=mean_func,
+                                    priors=priors,
+                                    nugget="fit")
+
+
+```
